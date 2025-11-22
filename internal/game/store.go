@@ -1,12 +1,15 @@
 package game
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 )
 
 type ActionType string
@@ -144,18 +147,40 @@ func (g *Game) handleAction(action ActionType, body json.RawMessage) error {
 type Store struct {
 	mu    sync.RWMutex
 	games map[string]*Game
+
+	redis *redis.Client
 }
 
-func NewStore() *Store {
-	return &Store{games: make(map[string]*Game)}
+func NewStore(redisClient *redis.Client) *Store {
+	return &Store{
+		games: make(map[string]*Game),
+		redis: redisClient,
+	}
 }
 
-func (s *Store) NewGame() *Game {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	g := newGame()
-	s.games[g.ID] = g
-	return g
+func (store *Store) NewGame() (*Game, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	newGame := newGame()
+
+	store.games[newGame.ID] = newGame
+
+	serializedGame, err := json.Marshal(newGame)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to serialize game.")
+		return nil, err
+	}
+
+	redisKey := "game:" + newGame.ID
+	ctx := context.Background()
+
+	if err := store.redis.Set(ctx, redisKey, serializedGame, 0).Err(); err != nil {
+		log.Error().Err(err).Msg("Failed to save game to Redis.")
+		return nil, err
+	}
+
+	return newGame, nil
 }
 
 func (s *Store) Get(id string) *Game {

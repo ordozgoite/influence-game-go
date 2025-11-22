@@ -5,6 +5,7 @@ import (
 
 	"github.com/gobuffalo/buffalo"
 	"github.com/gobuffalo/buffalo/render"
+	"github.com/rs/zerolog/log"
 )
 
 var renderer = render.New(render.Options{})
@@ -18,8 +19,15 @@ func NewRoomsController(store *game.Store) *RoomsController {
 }
 
 func (controller *RoomsController) CreateRoom(ctx buffalo.Context) error {
-	newGame := controller.Store.NewGame()
+	log.Info().Msg("Creating new game.")
 
+	newGame, err := controller.Store.NewGame()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to create new game.")
+		return ctx.Render(500, renderer.JSON(map[string]any{
+			"error": err.Error(),
+		}))
+	}
 	return ctx.Render(200, renderer.JSON(map[string]any{
 		"gameID": newGame.ID,
 	}))

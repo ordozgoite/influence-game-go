@@ -61,8 +61,8 @@ require (
 	github.com/joho/godotenv v1.4.0 // indirect
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/luna-duclos/instrumentedsql v1.1.3 // indirect
-	github.com/mattn/go-colorable v0.1.9 // indirect
-	github.com/mattn/go-isatty v0.0.14 // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/mattn/go-sqlite3 v1.14.16 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.20 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
@@ -72,6 +72,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/redis/go-redis/v9 v9.17.0 // indirect
 	github.com/rogpeppe/go-internal v1.9.0 // indirect
+	github.com/rs/zerolog v1.34.0 // indirect
 	github.com/sergi/go-diff v1.2.0 // indirect
 	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/sourcegraph/annotate v0.0.0-20160123013949-f4cad6c6324d // indirect
@@ -82,7 +83,7 @@ require (
 	golang.org/x/crypto v0.0.0-20220722155217-630584e8d5aa // indirect
 	golang.org/x/net v0.0.0-20221002022538-bcab6841153b // indirect
 	golang.org/x/sync v0.14.0 // indirect
-	golang.org/x/sys v0.0.0-20220908164124-27713097b956 // indirect
+	golang.org/x/sys v0.12.0 // indirect
 	golang.org/x/term v0.0.0-20220722155259-a9ba230a4035 // indirect
 	golang.org/x/text v0.25.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
