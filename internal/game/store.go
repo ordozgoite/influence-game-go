@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -57,6 +58,8 @@ type Player struct {
 type Game struct {
 	ID        string
 	CreatedAt time.Time
+	AdminID   string
+	JoinCode  string
 	Players   []*Player
 	TurnIndex int
 	Started   bool
@@ -77,7 +80,7 @@ type PublicInfluence struct {
 	Revealed bool    `json:"revealed"`
 }
 
-type PublicPlayer struct {
+type PlayerPublicInfo struct {
 	ID         string            `json:"id"`
 	Nickname   string            `json:"nickname"`
 	Coins      int               `json:"coins"`
@@ -85,38 +88,41 @@ type PublicPlayer struct {
 	Influences []PublicInfluence `json:"influences"`
 }
 
-type PublicState struct {
-	GameID    string         `json:"gameID"`
-	Started   bool           `json:"started"`
-	Finished  bool           `json:"finished"`
-	TurnIndex int            `json:"turnIndex"`
-	Players   []PublicPlayer `json:"players"`
+type PublicGameState struct {
+	GameID    string             `json:"gameID"`
+	JoinCode  string             `json:"joinCode"`
+	Started   bool               `json:"started"`
+	Finished  bool               `json:"finished"`
+	TurnIndex int                `json:"turnIndex"`
+	Players   []PlayerPublicInfo `json:"players"`
 }
 
-func newGame() *Game {
-	return &Game{
-		ID:        uuid.NewString(),
-		CreatedAt: time.Now(),
-		Players:   []*Player{},
-	}
-}
-
-func (game *Game) getPublicState() *PublicState {
-	publicPlayers := make([]PublicPlayer, 0, len(game.Players))
+func (game *Game) GetPublicGameState() *PublicGameState {
+	playersPublicInfo := make([]PlayerPublicInfo, 0, len(game.Players))
 
 	for _, player := range game.Players {
-		publicPlayers = append(publicPlayers, PublicPlayer{
-			ID: player.ID, Nickname: player.Nickname, Coins: player.Coins, Alive: player.Alive,
+		playersPublicInfo = append(playersPublicInfo, PlayerPublicInfo{
+			ID:         player.ID,
+			Nickname:   player.Nickname,
+			Coins:      player.Coins,
+			Alive:      player.Alive,
+			Influences: []PublicInfluence{}, // TODO: Add influences public info
 		})
+
+		// Warning: Remember to retrieve user's own influences
 	}
 
-	return &PublicState{
-		GameID: game.ID, Started: game.Started, Finished: game.Finished,
-		TurnIndex: game.TurnIndex, Players: publicPlayers,
+	return &PublicGameState{
+		GameID:    game.ID,
+		JoinCode:  game.JoinCode,
+		Started:   game.Started,
+		Finished:  game.Finished,
+		TurnIndex: game.TurnIndex,
+		Players:   playersPublicInfo,
 	}
 }
 
-func (g *Game) handleAction(action ActionType, body json.RawMessage) error {
+func (g *Game) HandleAction(action ActionType, body json.RawMessage) error {
 	switch action {
 	case ActionStart:
 		if g.Started {
@@ -164,18 +170,60 @@ func NewStore(redisClient *redis.Client) *Store {
 	}
 }
 
-func (store *Store) NewGame() (*Game, error) {
+func (store *Store) CreateGameRoom(adminNickname string) (*PublicGameState, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
-	newGame := newGame()
-
+	adminPlayer := buildNewPlayer(adminNickname)
+	newGame := buildNewGame(adminPlayer)
 	store.games[newGame.ID] = newGame
 
+	if err := store.saveGameToRedis(newGame); err != nil {
+		return nil, err
+	}
+
+	newGamePublicInfo := newGame.GetPublicGameState()
+
+	return newGamePublicInfo, nil
+}
+
+func buildNewPlayer(nickname string) *Player {
+	return &Player{
+		ID:       uuid.NewString(),
+		Nickname: nickname,
+		Coins:    2,
+		Alive:    true,
+	}
+}
+
+func buildNewGame(adminPlayer *Player) *Game {
+	return &Game{
+		ID:        uuid.NewString(),
+		CreatedAt: time.Now(),
+		Players:   []*Player{adminPlayer},
+		JoinCode:  generateJoinCode(),
+		AdminID:   adminPlayer.ID,
+		TurnIndex: 0,
+		Started:   false,
+		Finished:  false,
+	}
+}
+
+const letters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+func generateJoinCode() string {
+	b := make([]byte, 6)
+	for i := range b {
+		b[i] = letters[rand.Intn(len(letters))]
+	}
+	return string(b)
+}
+
+func (store *Store) saveGameToRedis(newGame *Game) error {
 	serializedGame, err := json.Marshal(newGame)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to serialize game.")
-		return nil, err
+		return err
 	}
 
 	redisKey := "game:" + newGame.ID
@@ -183,10 +231,10 @@ func (store *Store) NewGame() (*Game, error) {
 
 	if err := store.redis.Set(ctx, redisKey, serializedGame, 0).Err(); err != nil {
 		log.Error().Err(err).Msg("Failed to save game to Redis.")
-		return nil, err
+		return err
 	}
 
-	return newGame, nil
+	return nil
 }
 
 func (store *Store) CreatePlayerSession(ctx context.Context, gameID string, playerID string) (string, error) {

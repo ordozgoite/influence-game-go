@@ -21,20 +21,34 @@ func NewRoomsController(store *game.Store) *RoomsController {
 
 func (controller *RoomsController) CreateRoom(ctx buffalo.Context) error {
 	log.Info().Msg("Creating new game...")
+	var dto CreateRoomDTO
 
-	newGame, err := controller.Store.NewGame()
+	if err := ctx.Bind(&dto); err != nil {
+		return ctx.Render(400, renderer.JSON(map[string]any{
+			"error": "invalid_json",
+		}))
+	}
+
+	if err := dto.Validate(); err != nil {
+		return ctx.Render(400, renderer.JSON(map[string]any{
+			"error": err.Error(),
+		}))
+	}
+
+	nickname := dto.Nickname
+
+	newGamePublicInfo, err := controller.Store.CreateGameRoom(nickname)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to create new game.")
 		return ctx.Render(500, renderer.JSON(map[string]any{
 			"error": err.Error(),
 		}))
 	}
-	return ctx.Render(200, renderer.JSON(map[string]any{
-		"gameID": newGame.ID,
-	}))
+	return ctx.Render(200, renderer.JSON(newGamePublicInfo))
 }
 
 func (controller *RoomsController) JoinRoom(ctx buffalo.Context) error {
+	log.Info().Msg("Joining room...")
 	var dto JoinRoomDTO
 
 	if err := ctx.Bind(&dto); err != nil {
