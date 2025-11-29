@@ -171,13 +171,13 @@ func NewStore(redisClient *redis.Client) *Store {
 	}
 }
 
-type CreateRoomResult struct {
+type OnboardingResult struct {
 	Game   *PublicGameState `json:"game"`
 	Player *Player          `json:"player"`
 	Token  string           `json:"token"`
 }
 
-func (store *Store) CreateGameRoom(adminNickname string) (*CreateRoomResult, error) {
+func (store *Store) CreateGameRoom(adminNickname string) (*OnboardingResult, error) {
 	adminPlayer := buildNewPlayer(adminNickname)
 
 	newGame, err := store.buildNewGame(adminPlayer)
@@ -198,7 +198,7 @@ func (store *Store) CreateGameRoom(adminNickname string) (*CreateRoomResult, err
 
 	publicState := newGame.GetPublicGameState()
 
-	return &CreateRoomResult{
+	return &OnboardingResult{
 		Game:   publicState,
 		Player: adminPlayer,
 		Token:  sessionToken,
@@ -314,16 +314,16 @@ func (store *Store) CreatePlayerSession(gameID string, playerID string) (string,
 	return sessionToken, nil
 }
 
-func (store *Store) Join(joinCode, nickname string) (*Game, *Player, string, error) {
+func (store *Store) Join(joinCode, nickname string) (*OnboardingResult, error) {
 	ctx := context.Background()
 
 	joinKey := "joincode:" + joinCode
 	gameID, err := store.redis.Get(ctx, joinKey).Result()
 	if err == redis.Nil {
-		return nil, nil, "", ErrGameNotFound
+		return nil, ErrGameNotFound
 	}
 	if err != nil {
-		return nil, nil, "", err
+		return nil, err
 	}
 
 	gameKey := "game:" + gameID
@@ -374,7 +374,7 @@ func (store *Store) Join(joinCode, nickname string) (*Game, *Player, string, err
 		}
 
 		if err != nil {
-			return nil, nil, "", err
+			return nil, err
 		}
 
 		break
@@ -383,8 +383,12 @@ func (store *Store) Join(joinCode, nickname string) (*Game, *Player, string, err
 	sessionToken, err := store.CreatePlayerSession(gameID, joinedPlayer.ID)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to create player session.")
-		return nil, nil, "", err
+		return nil, err
 	}
 
-	return &finalGame, joinedPlayer, sessionToken, nil
+	return &OnboardingResult{
+		Game:   finalGame.GetPublicGameState(),
+		Player: joinedPlayer,
+		Token:  sessionToken,
+	}, nil
 }

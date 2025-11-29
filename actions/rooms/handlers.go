@@ -71,7 +71,7 @@ func (controller *RoomsController) JoinRoom(ctx buffalo.Context) error {
 
 	joinCode := ctx.Param("joinCode")
 
-	game, player, sessionToken, err := controller.Store.Join(
+	onboardingResult, err := controller.Store.Join(
 		joinCode,
 		dto.Nickname,
 	)
@@ -84,10 +84,5 @@ func (controller *RoomsController) JoinRoom(ctx buffalo.Context) error {
 
 	log.Info().Msg("Joined game room successfully.")
 
-	return ctx.Render(200, renderer.JSON(map[string]any{
-		"gameID":       game.ID,
-		"playerID":     player.ID,
-		"token":        sessionToken,
-		"playersCount": len(game.Players),
-	}))
+	return ctx.Render(200, renderer.JSON(onboardingResult))
 }
