@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"influence_game/internal/realtime"
 	"math/rand"
 	"time"
 
@@ -211,6 +212,10 @@ func NewStore(redisClient *redis.Client) *Store {
 	return &Store{
 		redis: redisClient,
 	}
+}
+
+func (store *Store) GetRedis() *redis.Client {
+	return store.redis
 }
 
 type OnboardingResult struct {
@@ -429,6 +434,10 @@ func (store *Store) Join(joinCode, nickname string) (*OnboardingResult, error) {
 		return nil, err
 	}
 
+	// 🔥 HELLO WORLD VIA WS
+	msg := []byte(`"hello world from Join()"`)
+	realtime.Manager.Broadcast(gameID, msg)
+
 	return &OnboardingResult{
 		Game:   finalGame.GetPublicGameState(),
 		Player: joinedPlayer,
@@ -442,9 +451,11 @@ func (store *Store) StartGame(gameID string, sessionToken string) (*PublicGameSt
 	sessionKey := "session:" + sessionToken
 	sessionJSON, err := store.redis.Get(ctx, sessionKey).Bytes()
 	if err == redis.Nil {
+		log.Error().Msg("Session not found.")
 		return nil, ErrInvalidSession
 	}
 	if err != nil {
+		log.Error().Err(err).Msg("Failed to get session from Redis.")
 		return nil, err
 	}
 

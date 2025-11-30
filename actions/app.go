@@ -21,9 +21,10 @@ import (
 var ENV = envy.Get("GO_ENV", "development")
 
 var (
-	app     *buffalo.App
-	appOnce sync.Once
-	T       *i18n.Translator
+	app       *buffalo.App
+	appOnce   sync.Once
+	T         *i18n.Translator
+	gameStore *game.Store
 )
 
 func App() *buffalo.App {
@@ -64,11 +65,13 @@ func App() *buffalo.App {
 		// ============================================================
 		// 🔥 Store + RoomsController
 		// ============================================================
-		store := game.NewStore(redisClient)
-		roomsController := rooms.NewRoomsController(store)
+		gameStore = game.NewStore(redisClient)
+		roomsController := rooms.NewRoomsController(gameStore)
 
 		// Registrar rotas da feature /rooms
 		rooms.Register(app, roomsController)
+		app.GET("/ws/rooms/{gameID}", GameWebSocketHandler)
+
 		// ============================================================
 	})
 
