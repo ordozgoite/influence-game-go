@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"influence_game/internal/realtime"
 	"math/rand"
 	"time"
 
@@ -434,9 +433,13 @@ func (store *Store) Join(joinCode, nickname string) (*OnboardingResult, error) {
 		return nil, err
 	}
 
-	// 🔥 HELLO WORLD VIA WS
-	msg := []byte(`"hello world from Join()"`)
-	realtime.Manager.Broadcast(gameID, msg)
+	BroadcastEvent(
+		finalGame.GetPublicGameState(),
+		"player_joined",
+		map[string]any{
+			"newPlayer": joinedPlayer,
+		},
+	)
 
 	return &OnboardingResult{
 		Game:   finalGame.GetPublicGameState(),
