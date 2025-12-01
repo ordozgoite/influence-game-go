@@ -13,25 +13,38 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-type ActionType string
+type ActionType struct {
+	name            string
+	isImmediate     bool
+	isBlockable     bool
+	isContestable   bool
+	requiresTarget  bool
+	bloackableRoles []Influence
+	targetPlayerID  *string
+}
 
-const (
-	ActionStart   ActionType = "start"
-	ActionEndTurn ActionType = "end_turn"
+type DeclareActionPayload struct {
+	ActionName     string  `json:"actionName"`
+	TargetPlayerID *string `json:"targetId,omitempty"`
+}
 
-	ActionIncome     ActionType = "income"
-	ActionForeignAid ActionType = "foreign_aid"
-	ActionCoup       ActionType = "coup"
+// const (
+// 	ActionStart   ActionType = "start"
+// 	ActionEndTurn ActionType = "end_turn"
 
-	ActionTax         ActionType = "tax"
-	ActionAssassinate ActionType = "assassinate"
-	ActionSteal       ActionType = "steal"
-	ActionExchange    ActionType = "exchange"
+// 	ActionIncome     ActionType = "income"
+// 	ActionForeignAid ActionType = "foreign_aid"
+// 	ActionCoup       ActionType = "coup"
 
-	ActionBlockForeignAid  ActionType = "block_foreign_aid"
-	ActionBlockAssassinate ActionType = "block_assassinate"
-	ActionBlockSteal       ActionType = "block_steal"
-)
+// 	ActionTax         ActionType = "tax"
+// 	ActionAssassinate ActionType = "assassinate"
+// 	ActionSteal       ActionType = "steal"
+// 	ActionExchange    ActionType = "exchange"
+
+// 	ActionBlockForeignAid  ActionType = "block_foreign_aid"
+// 	ActionBlockAssassinate ActionType = "block_assassinate"
+// 	ActionBlockSteal       ActionType = "block_steal"
+// )
 
 var (
 	ErrGameNotFound          = errors.New("game_not_found")
@@ -48,9 +61,8 @@ var (
 )
 
 type Influence struct {
-	Role     string       `json:"role"`
-	Revealed bool         `json:"revealed"`
-	Actions  []ActionType `json:"actions"`
+	Role     string `json:"role"`
+	Revealed bool   `json:"revealed"`
 }
 
 type Player struct {
@@ -105,6 +117,15 @@ type PublicGameState struct {
 	TurnIndex  int                `json:"turnIndex"`
 	Players    []PlayerPublicInfo `json:"players"`
 	DeckLength int                `json:"deckLength"`
+}
+
+type PendingAction struct {
+	ID        string     `json:"id"`
+	ActorID   string     `json:"actorId"`
+	Action    ActionType `json:"action"`
+	TargetID  *string    `json:"targetId,omitempty"`
+	CreatedAt time.Time  `json:"createdAt"`
+	Status    string     `json:"status"` // "declared", "resolved", "canceled"...
 }
 
 func (game *Game) GetPublicGameState() *PublicGameState {
@@ -519,7 +540,7 @@ func (store *Store) StartGame(gameID string, sessionToken string) (*PublicGameSt
 			}
 
 			game.Started = true
-			game.TurnIndex = 0
+			game.TurnIndex = rand.Intn(len(game.Players)) // Is it really random?
 			deck := NewBaseDeck()
 
 			rand.Shuffle(len(deck), func(i, j int) {
@@ -577,29 +598,223 @@ func (store *Store) StartGame(gameID string, sessionToken string) (*PublicGameSt
 		return nil, err
 	}
 
+	BroadcastEvent(
+		game.GetPublicGameState(),
+		"game_started",
+		nil,
+	)
+
 	return game.GetPublicGameState(), nil
 }
 
 func NewBaseDeck() []Influence {
 	return []Influence{
-		{Role: "Duke", Actions: []ActionType{ActionTax}},
-		{Role: "Duke", Actions: []ActionType{ActionTax}},
-		{Role: "Duke", Actions: []ActionType{ActionTax}},
+		{Role: "Duke"},
+		{Role: "Duke"},
+		{Role: "Duke"},
 
-		{Role: "Assassin", Actions: []ActionType{ActionAssassinate}},
-		{Role: "Assassin", Actions: []ActionType{ActionAssassinate}},
-		{Role: "Assassin", Actions: []ActionType{ActionAssassinate}},
+		{Role: "Assassin"},
+		{Role: "Assassin"},
+		{Role: "Assassin"},
 
-		{Role: "Ambassador", Actions: []ActionType{ActionExchange}},
-		{Role: "Ambassador", Actions: []ActionType{ActionExchange}},
-		{Role: "Ambassador", Actions: []ActionType{ActionExchange}},
+		{Role: "Ambassador"},
+		{Role: "Ambassador"},
+		{Role: "Ambassador"},
 
-		{Role: "Captain", Actions: []ActionType{ActionSteal}},
-		{Role: "Captain", Actions: []ActionType{ActionSteal}},
-		{Role: "Captain", Actions: []ActionType{ActionSteal}},
+		{Role: "Captain"},
+		{Role: "Captain"},
+		{Role: "Captain"},
 
-		{Role: "Contessa", Actions: []ActionType{ActionBlockAssassinate}},
-		{Role: "Contessa", Actions: []ActionType{ActionBlockAssassinate}},
-		{Role: "Contessa", Actions: []ActionType{ActionBlockAssassinate}},
+		{Role: "Contessa"},
+		{Role: "Contessa"},
+		{Role: "Contessa"},
 	}
+}
+
+func (store *Store) DeclareAction(
+	gameID string,
+	action DeclareActionPayload,
+	sessionToken string,
+) (*PublicGameState, error) {
+	ctx := context.Background()
+
+	sessionKey := "session:" + sessionToken
+	sessionJSON, err := store.redis.Get(ctx, sessionKey).Bytes()
+	if err == redis.Nil {
+		return nil, ErrInvalidSession
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var session PlayerSession
+	if err := json.Unmarshal(sessionJSON, &session); err != nil {
+		return nil, err
+	}
+	if session.GameID != gameID {
+		return nil, ErrInvalidSession
+	}
+	actingPlayerID := session.PlayerID
+
+	gameKey := "game:" + gameID
+
+	var resultGame Game
+	actionType, err := buildActionType(action)
+	if err != nil {
+		return nil, err
+	}
+
+	for {
+		err := store.redis.Watch(ctx, func(tx *redis.Tx) error {
+			gameJSON, err := tx.Get(ctx, gameKey).Bytes()
+			if err == redis.Nil {
+				return ErrGameNotFound
+			}
+			if err != nil {
+				return err
+			}
+
+			var game Game
+			if err := json.Unmarshal(gameJSON, &game); err != nil {
+				return err
+			}
+
+			if !game.Started || game.Finished {
+				return ErrNotStarted
+			}
+
+			turnPlayer := game.Players[game.TurnIndex]
+			if turnPlayer.ID != actingPlayerID {
+				return fmt.Errorf("not_your_turn")
+			}
+
+			fmt.Println("actionType", actionType)
+
+			switch actionType.name {
+			case "income":
+				turnPlayer.Coins++
+				game.TurnIndex = (game.TurnIndex + 1) % len(game.Players)
+			case "foreign_aid":
+				// Criar PendingAction para foreign aid
+				// Broad cast do PendingAction para todos os players
+			case "coup":
+				if turnPlayer.Coins < 7 {
+					return fmt.Errorf("not_enough_coins")
+				}
+
+				if actionType.targetPlayerID == nil {
+					return fmt.Errorf("missing_target_player")
+				}
+
+				var targetPlayer *Player
+				for i := range game.Players {
+					if game.Players[i].ID == *actionType.targetPlayerID {
+						targetPlayer = game.Players[i]
+						break
+					}
+				}
+
+				if targetPlayer == nil {
+					return fmt.Errorf("target_player_not_found")
+				}
+
+				// Se o alvo não tiver nenhuma influência revelada, não pode ser morto
+				if targetPlayer.Influences[0].Revealed && targetPlayer.Influences[1].Revealed {
+					return fmt.Errorf("target_player_is_dead")
+				}
+
+				if !targetPlayer.Influences[0].Revealed && !targetPlayer.Influences[1].Revealed {
+					// Criar evento pendente de golpe de estado (alvo deve escolher uma influência para revelar)
+				}
+
+				turnPlayer.Coins -= 7
+				game.TurnIndex = (game.TurnIndex + 1) % len(game.Players)
+			}
+
+			updatedJSON, _ := json.Marshal(&game)
+
+			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+				pipe.Set(ctx, gameKey, updatedJSON, 0)
+				return nil
+			})
+
+			if err != nil {
+				return err
+			}
+
+			// guardar cópia final pra retornar
+			resultGame = game
+			return nil
+		}, gameKey)
+
+		BroadcastEvent(
+			resultGame.GetPublicGameState(),
+			"action_declared",
+			map[string]any{
+				"actionName":      actionType.name,
+				"isImmediate":     actionType.isImmediate,
+				"isBlockable":     actionType.isBlockable,
+				"isContestable":   actionType.isContestable,
+				"requiresTarget":  actionType.requiresTarget,
+				"targetPlayerID":  actionType.targetPlayerID,
+				"bloackableRoles": actionType.bloackableRoles,
+			},
+		)
+
+		if err == redis.TxFailedErr {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		break
+	}
+
+	publicGameState := resultGame.GetPublicGameState()
+	return publicGameState, nil
+}
+
+func buildActionType(action DeclareActionPayload) (*ActionType, error) {
+	var actionType ActionType
+	switch action.ActionName {
+	case "income":
+		actionType = ActionType{
+			name:            "income",
+			isImmediate:     true,
+			isBlockable:     false,
+			isContestable:   false,
+			requiresTarget:  false,
+			targetPlayerID:  nil,
+			bloackableRoles: []Influence{},
+		}
+	case "foreign_aid":
+		actionType = ActionType{
+			name:           "foreign_aid",
+			isImmediate:    true,
+			isBlockable:    true,
+			isContestable:  false,
+			requiresTarget: false,
+			targetPlayerID: nil,
+			bloackableRoles: []Influence{
+				{Role: "Duke"},
+			},
+		}
+	case "coup":
+		if action.TargetPlayerID == nil {
+			return nil, errors.New("target_player_is_required")
+		}
+		actionType = ActionType{
+			name:            "coup",
+			isImmediate:     true,
+			isBlockable:     false,
+			isContestable:   false,
+			requiresTarget:  true,
+			targetPlayerID:  action.TargetPlayerID,
+			bloackableRoles: []Influence{},
+		}
+	// TODO: Add role actions (tax, assassinate, steal, exchange)
+	default:
+		return nil, errors.New("invalid_action_name")
+	}
+	return &actionType, nil
 }

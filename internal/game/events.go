@@ -9,11 +9,11 @@ import (
 )
 
 type ServerEvent struct {
-	EventType string           `json:"eventType"`         // "player_joined",
-	GameID    string           `json:"gameID"`            // pra debug / cliente
-	Timestamp time.Time        `json:"timestamp"`         // quando o evento foi emitido
-	GameState *PublicGameState `json:"state,omitempty"`   // snapshot opcional
-	Payload   map[string]any   `json:"payload,omitempty"` // dados extras da ação
+	EventType string           `json:"eventType"`
+	GameID    string           `json:"gameID"`
+	Timestamp time.Time        `json:"timestamp"`
+	GameState *PublicGameState `json:"state,omitempty"`
+	Payload   map[string]any   `json:"payload,omitempty"`
 }
 
 func BroadcastEvent(

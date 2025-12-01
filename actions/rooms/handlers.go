@@ -122,3 +122,60 @@ func (controller *RoomsController) StartGame(ctx buffalo.Context) error {
 
 	return ctx.Render(200, renderer.JSON(updatedGameState))
 }
+
+func (controller *RoomsController) DeclareAction(ctx buffalo.Context) error {
+	log.Info().Msg("Declaring action.")
+	gameID := ctx.Param("gameID")
+
+	var dto DeclareActionDTO
+	if err := ctx.Bind(&dto); err != nil {
+		log.Error().Err(err).Msg("Failed to bind declare action request.")
+		return ctx.Render(400, renderer.JSON(map[string]any{
+			"error": "invalid_json",
+		}))
+	}
+
+	if err := dto.Validate(); err != nil {
+		log.Error().Err(err).Msg("Failed to validate declare action request.")
+		return ctx.Render(400, renderer.JSON(map[string]any{
+			"error": err.Error(),
+		}))
+	}
+
+	authHeader := ctx.Request().Header.Get("Authorization")
+	const prefix = "Bearer "
+
+	if !strings.HasPrefix(authHeader, prefix) {
+		log.Error().Msg("Missing or invalid Authorization header.")
+		return ctx.Render(401, renderer.JSON(map[string]any{
+			"error": "missing or invalid Authorization header",
+		}))
+	}
+
+	sessionToken := strings.TrimPrefix(authHeader, prefix)
+	if sessionToken == "" {
+		log.Error().Msg("Empty bearer token.")
+		return ctx.Render(401, renderer.JSON(map[string]any{
+			"error": "empty bearer token",
+		}))
+	}
+
+	currentGameState, err := controller.Store.DeclareAction(
+		gameID,
+		game.DeclareActionPayload{
+			ActionName:     dto.ActionName,
+			TargetPlayerID: dto.TargetPlayerID,
+		},
+		sessionToken,
+	)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to declare action.")
+		return ctx.Render(400, renderer.JSON(map[string]any{
+			"error": err.Error(),
+		}))
+	}
+
+	log.Info().Msg("Action declared successfully.")
+
+	return ctx.Render(200, renderer.JSON(currentGameState))
+}
